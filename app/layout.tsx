@@ -1,0 +1,1 @@
+import type {Metadata} from "next";import "./globals.css";export const metadata:Metadata={title:"쇼츠머신 · 제작실",description:"소재를 찾고 대본을 다듬고 스토리보드로 확인하는 제작실.",icons:{icon:"/favicon.svg"}};export default function RootLayout({children}:{children:React.ReactNode}){return <html lang="ko"><body>{children}</body></html>}
