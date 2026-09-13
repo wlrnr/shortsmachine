@@ -1,0 +1,45 @@
+'use client';
+import {useEffect,useRef,useState} from 'react';
+import type {Scene} from '@/lib/contracts';
+import type {ImageCandidate} from '@/lib/commons';
+import {renderCard,exportCards,type CardFormat} from '@/lib/card-render';
+function Preview({scene,index,count,projectId,source,format}:{scene:Scene;index:number;count:number;projectId:string;source:string;format:CardFormat}){
+ const ref=useRef<HTMLCanvasElement>(null),[error,setError]=useState('');
+ useEffect(()=>{let active=true;const timer=setTimeout(()=>{renderCard(scene,index,count,projectId,source,format).then(c=>{if(!active||!ref.current)return;ref.current.width=c.width;ref.current.height=c.height;ref.current.getContext('2d')!.drawImage(c,0,0);setError('');}).catch(e=>{if(active)setError(e.message);});},180);return()=>{active=false;clearTimeout(timer);};},[scene,index,count,projectId,source,format]);
+ return <div className="card-preview"><canvas ref={ref} aria-label={`${index+1}번 카드 미리보기`}/>{error&&<p role="alert">{error}</p>}</div>;
+}
+export default function CardEditor({projectId,source,scenes,onChange,onSave,dirty,locked,onBusyChange}:{projectId:string;source:string;scenes:Scene[];onChange:(s:Scene[])=>void;onSave:()=>Promise<void>;dirty:boolean;locked:boolean;onBusyChange:(label:string)=>void}){
+ const [active,setActive]=useState(0),[format,setFormat]=useState<CardFormat>('portrait'),[query,setQuery]=useState(''),[images,setImages]=useState<ImageCandidate[]>([]),[searched,setSearched]=useState(false),[busy,setBusy]=useState(''),[error,setError]=useState(''),[notice,setNotice]=useState('');
+ const index=Math.min(active,scenes.length-1),s=scenes[index],disabled=!!busy||locked;
+ useEffect(()=>{setQuery(s?.imageQuery||'');setImages([]);setSearched(false);},[index,s?.imageQuery]);
+ async function run(label:string,fn:()=>Promise<void>){if(disabled)return;setBusy(label);onBusyChange(label);setError('');setNotice('');try{await fn();}catch(e){setError(e instanceof Error?e.message:'처리하지 못했습니다.');}finally{setBusy('');onBusyChange('');}}
+ async function request(url:string,options?:RequestInit){const r=await fetch(url,options),d:any=await r.json();if(!r.ok)throw new Error(d.error||'자료를 불러오지 못했습니다.');return d;}
+ function change(p:Partial<Scene>){onChange(scenes.map((x,i)=>i===index?{...x,...p}:x));}
+ function select(n:number){setActive(n);setError('');}
+ async function search(){const d=await request(`/api/projects/${projectId}/assets?q=${encodeURIComponent(query)}`);setImages(d.images);setSearched(true);}
+ async function choose(pageid:number){const d=await request(`/api/projects/${projectId}/assets`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pageid})});change({asset:d.asset,layout:'photo'});setNotice('자료를 선택했습니다. 문구와 함께 저장해 주세요.');}
+ async function upload(file:File){
+ if(!['image/jpeg','image/png','image/webp'].includes(file.type)||file.size>8*1024*1024)throw new Error('8MB 이하의 JPG, PNG, WebP 사진을 선택해 주세요.');
+ const bitmap=await createImageBitmap(file);if(bitmap.width*bitmap.height>40000000){bitmap.close();throw new Error('사진이 너무 큽니다. 해상도를 낮춰 주세요.');}bitmap.close();
+ const d=await request(`/api/projects/${projectId}/assets`,{method:'POST',headers:{'Content-Type':file.type},body:file});change({asset:{...d.asset,title:file.name.slice(0,500)},layout:'photo'});setNotice('사진을 올렸습니다. 아래에 출처와 사용 조건을 입력해 주세요.');
+ }
+ function move(delta:number){const next=index+delta;if(next<0||next>=scenes.length)return;const all=[...scenes];[all[index],all[next]]=[all[next],all[index]];onChange(all);setActive(next);}
+ if(!s)return <div className="empty"><h3>대본을 먼저 만들어 주세요.</h3></div>;
+ return <section className="card-workbench">
+ <div className="editorhead"><div><h2>카드뉴스 제작</h2><p>{scenes.length}장 · {dirty?'저장하지 않은 변경':'저장된 내용'} · 이미지 생성 비용 없음</p></div><div className="actions"><select aria-label="카드 크기" value={format} disabled={disabled} onChange={e=>setFormat(e.target.value as CardFormat)}><option value="portrait">세로 4:5 · 1080×1350</option><option value="square">정사각 1:1 · 1080×1080</option></select><button className="primary" disabled={disabled||!dirty} onClick={()=>run('저장 중',onSave)}>변경 저장</button></div></div>
+ {error&&<div className="notice error" role="alert">{error}</div>}{notice&&<div className="notice success" role="status">{notice}</div>}{busy&&<div className="notice working" role="status">{busy}</div>}
+ <div className="card-strip" aria-label="카드 순서">{scenes.map((x,i)=><button disabled={disabled} key={i} className={index===i?'chosen':''} onClick={()=>select(i)}><span>{String(i+1).padStart(2,'0')}</span>{x.headline||`장면 ${i+1}`}{x.layout!=='text'&&!x.asset&&<small>자료 선택 필요</small>}</button>)}</div>
+ <div className="card-studio"><div className="preview-column"><Preview scene={s} index={index} count={scenes.length} projectId={projectId} source={source} format={format}/><p className="preview-note">다운로드와 같은 배치 · 내용과 출처를 확인해 주세요.</p><div className="actions"><button className="secondary" disabled={disabled||index===0} onClick={()=>move(-1)}>앞으로</button><button className="secondary" disabled={disabled||index===scenes.length-1} onClick={()=>move(1)}>뒤로</button><button className="secondary" disabled={disabled||scenes.length<=3} onClick={()=>{if(confirm('이 카드를 삭제할까요? 저장 전까지 다른 작업은 유지됩니다.')){onChange(scenes.filter((_,i)=>i!==index));setActive(Math.max(0,index-1));}}}>카드 삭제</button></div></div>
+ <div className="card-controls card"><label>카드 제목 <input maxLength={60} value={s.headline||''} disabled={disabled} placeholder="한눈에 읽히는 핵심 한 줄" onChange={e=>change({headline:e.target.value})}/></label><label>카드 설명 <textarea maxLength={180} rows={3} value={s.caption||''} disabled={disabled} placeholder="카드만 읽어도 이해되는 짧은 설명" onChange={e=>change({caption:e.target.value})}/></label>
+ <div className="visualfields"><label>화면 구성<select value={s.layout||'photo'} disabled={disabled} onChange={e=>change({layout:e.target.value as 'photo'|'text'})}><option value="photo">사진 + 설명</option><option value="text">글 중심 카드</option></select></label><label>사진 배치<select value={s.fit||'contain'} disabled={disabled||s.layout==='text'} onChange={e=>change({fit:e.target.value as 'contain'|'cover'})}><option value="contain">전체 보이기</option><option value="cover">화면 채우기</option></select></label></div>
+ <label>오리의 한마디 · 선택<input maxLength={150} value={s.reaction} disabled={disabled} onChange={e=>change({reaction:e.target.value})}/></label>
+ <details><summary>영상용 내레이션 · 화면 메모</summary><label>내레이션<textarea maxLength={500} rows={3} value={s.narration} disabled={disabled} onChange={e=>change({narration:e.target.value})}/></label><label>필요한 화면<textarea maxLength={600} rows={2} value={s.visual} disabled={disabled} onChange={e=>change({visual:e.target.value})}/></label></details>
+ {s.layout!=='text'&&<div className="asset-search"><h3>이 장면의 실제 자료</h3><form onSubmit={e=>{e.preventDefault();run('이미지 검색 중',search);}}><div className="searchrow"><input aria-label="카드 이미지 검색어" required maxLength={200} value={query} disabled={disabled} onChange={e=>setQuery(e.target.value)} placeholder="예: giant panda bamboo"/><button className="secondary" disabled={disabled}>자료 검색</button></div></form><p>Wikimedia Commons · 구체적인 영문 명칭으로 검색하면 더 잘 찾을 수 있어요.</p><label className="upload-button">직접 확보한 사진 올리기<input type="file" accept="image/png,image/jpeg,image/webp" disabled={disabled} onChange={e=>{const f=e.target.files?.[0];if(f)run('사진 저장 중',()=>upload(f));e.target.value='';}}/></label>
+ {searched&&!images.length&&<p>검색 결과가 없습니다. 검색어를 줄이거나 사진을 직접 올려 주세요.</p>}
+ <div className="asset-grid">{images.map(img=><article key={img.pageid}><img src={img.thumbnail} alt={img.title} loading="lazy" referrerPolicy="no-referrer"/><p>{img.title}</p><small>{img.license||'사용 조건 확인 필요'}</small><a href={img.source} target="_blank" rel="noreferrer">원본·조건 확인</a><button className="secondary" disabled={disabled} onClick={()=>run('선택한 자료 저장 중',()=>choose(img.pageid))}>이 사진 사용</button></article>)}</div>
+ </div>}
+ {s.asset&&s.layout!=='text'&&<details className="asset-credit" open><summary>선택한 사진 · 출처와 사용 조건</summary><p>{s.asset.title}</p>{(['source','credit','license','licenseUrl'] as const).map((k,i)=><label key={k}>{['원본 주소','저작자·크레딧','사용 조건','라이선스 주소'][i]}<input maxLength={k==='license'?200:2000} value={s.asset![k]} disabled={disabled} onChange={e=>change({asset:{...s.asset!,[k]:e.target.value}})}/></label>)}<p>검색 결과의 관련성과 사용 조건은 원문에서 확인하세요. 출처 정보는 ZIP에도 포함됩니다.</p></details>}
+ </div></div>
+ <div className="export-bar"><button className="secondary" disabled={disabled||scenes.length>=12} onClick={()=>{onChange([...scenes,{seconds:5,visual:'설명용 카드',narration:'새 카드의 내레이션',reaction:'',headline:'새 카드',caption:'',layout:'text'}]);setActive(scenes.length);}}>+ 카드 추가</button><span>3~12장 · 문구·사진 수정 후 저장</span><button className="secondary" disabled={disabled||dirty} onClick={()=>run('전체 미리보기 만드는 중',()=>exportCards(scenes,projectId,source,format,'sheet'))}>전체 미리보기 PNG</button><button className="primary" disabled={disabled||dirty} onClick={()=>run('카드별 이미지 묶는 중',()=>exportCards(scenes,projectId,source,format,'zip'))}>카드별 PNG · ZIP</button></div>
+ </section>;
+}

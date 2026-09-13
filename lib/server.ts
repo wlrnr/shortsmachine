@@ -1,6 +1,6 @@
 import {env} from "cloudflare:workers";
 import {getChatGPTUser} from "@/app/chatgpt-auth";
-export const runtime=env as unknown as {DB:D1Database;BUCKET:R2Bucket;OPENAI_API_KEY?:string;TEXT_MODEL?:string;IMAGE_MODEL?:string};
+export const runtime=env as unknown as {DB:D1Database;BUCKET:R2Bucket;OPENAI_API_KEY?:string;TEXT_MODEL?:string;RESEARCH_MODEL?:string;IMAGE_MODEL?:string};
 export class HttpError extends Error {constructor(public status:number,message:string){super(message)}}
 export async function owner(request:Request){
  const u=await getChatGPTUser();if(!u)throw new HttpError(401,"로그인이 필요합니다.");

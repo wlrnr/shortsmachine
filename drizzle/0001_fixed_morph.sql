@@ -1,0 +1,1 @@
+ALTER TABLE `projects` ADD `research` text DEFAULT '{}' NOT NULL;

@@ -1,0 +1,28 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import ts from 'typescript';
+const code=ts.transpileModule(readFileSync('lib/card-render.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
+const {zipStore}=await import('data:text/javascript;base64,'+Buffer.from(code).toString('base64'));
+const payload=new TextEncoder().encode('카드뉴스 자료 출처'),archive=new Uint8Array(await zipStore([{name:'sources.txt',bytes:payload}]).arrayBuffer()),view=new DataView(archive.buffer);
+assert.equal(view.getUint32(0,true),0x04034b50);assert.equal(view.getUint16(6,true),0x800);assert.equal(view.getUint32(18,true),payload.length);
+assert.deepEqual(archive.slice(30+view.getUint16(26,true),30+view.getUint16(26,true)+payload.length),payload);
+assert.equal(view.getUint32(archive.length-22,true),0x06054b50);
+const base='http://localhost:5173',headers={origin:base,cookie:'__sites_local_auth=1','Content-Type':'application/json'};
+const call=(p,method='GET',body)=>fetch(base+p,{method,headers,body:body?JSON.stringify(body):undefined});
+const list=await (await call('/api/projects')).json(),p=list.projects.find(x=>x.title==='[검증용] 쇼츠 제작 흐름');assert.ok(p);
+const path='/api/projects/'+p.id;
+const data=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jN1sAAAAASUVORK5CYII=','base64');
+const upload=await fetch(base+path+'/assets',{method:'POST',headers:{...headers,'Content-Type':'image/png'},body:data});assert.equal(upload.status,201);const {asset}=await upload.json();
+assert.equal((await fetch(base+path+'/assets?asset='+asset.id)).status,401);
+const image=await call(path+'/assets?asset='+asset.id);assert.equal(image.status,200);assert.deepEqual(Buffer.from(await image.arrayBuffer()),data);
+const other=await call('/api/projects','POST',{title:'[검증용] 카드 자료 권한',source:'https://example.com',notes:'자료의 프로젝트별 접근 권한을 검증하기 위한 테스트 소재입니다.'});const {id:otherId}=await other.json();
+assert.equal((await call('/api/projects/'+otherId+'/assets?asset='+asset.id)).status,404);
+const scenes=JSON.parse(p.scenes).slice(0,5).map((s,i)=>({...s,headline:'카드 '+i,caption:'짧은 설명',layout:i===0?'photo':'text',asset:i===0?asset:null}));
+assert.equal((await call(path,'PATCH',{revision:p.revision,scenes})).status,200);
+assert.equal((await call('/api/projects/'+otherId,'PATCH',{revision:0,scenes})).status,400);
+assert.equal((await call(path,'PATCH',{revision:p.revision+1,scenes:scenes.slice(0,2)})).status,400);
+assert.equal((await call(path,'POST',{revision:p.revision+1,action:'board'})).status,400);
+const invalid=await fetch(base+path+'/assets',{method:'POST',headers:{...headers,'Content-Type':'image/png'},body:'<svg></svg>'});assert.equal(invalid.status,400);
+const saved=(await (await call('/api/projects')).json()).projects.find(x=>x.id===p.id);assert.deepEqual(JSON.parse(saved.scenes),scenes);
+if(process.argv.includes('--search')){const search=await call(path+'/assets?q=giant%20panda');const result=await search.json();assert.equal(search.status,200,JSON.stringify(result));assert.ok(result.images.length);const imported=await call(path+'/assets','POST',{pageid:result.images[0].pageid});assert.equal(imported.status,201,await imported.clone().text());const savedImage=await imported.json();assert.ok(savedImage.asset.source);assert.equal((await call(path+'/assets?asset='+savedImage.asset.id)).status,200);console.log('Commons search and image import:',result.images.length,'images');}
+console.log('PASS: ZIP, image upload/read, authentication, cross-project isolation, variable cards, metadata persistence, retired generation');
